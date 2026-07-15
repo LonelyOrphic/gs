@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
-import google.generativeai as genai
+import google.genai as genai
 from PIL import Image
 
 DB_PATH = Path(__file__).parent / "favorites.db"
