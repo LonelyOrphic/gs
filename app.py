@@ -16,7 +16,8 @@ from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
-import google.genai as genai
+from google import genai
+from google.genai import types
 from PIL import Image
 
 DB_PATH = Path(__file__).parent / "favorites.db"
@@ -104,12 +105,7 @@ def extract_json(text: str) -> dict:
 
 
 def generate_recipes(api_key, pantry, dietary, cuisine, count):
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(
-        "gemini-2.0-flash",
-        system_instruction=RECIPE_SCHEMA_INSTRUCTIONS,
-        generation_config={"response_mime_type": "application/json"},
-    )
+    client = genai.Client(api_key=api_key)
     prefs = []
     if dietary != "None":
         prefs.append(f"dietary restriction: {dietary}")
@@ -122,19 +118,19 @@ def generate_recipes(api_key, pantry, dietary, cuisine, count):
         f"Preferences: {pref_text}.\n"
         f"Generate exactly {count} recipe suggestions as JSON."
     )
-    response = model.generate_content(prompt)
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=RECIPE_SCHEMA_INSTRUCTIONS,
+            response_mime_type="application/json",
+        ),
+    )
     return extract_json(response.text)["recipes"]
 
 
 def generate_meal_plan(api_key, pantry, dietary, days):
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(
-        "gemini-2.0-flash",
-        system_instruction=RECIPE_SCHEMA_INSTRUCTIONS.replace(
-            '"recipes"', '"recipes"'
-        ) + "\nGenerate one recipe per day, with good variety across the days.",
-        generation_config={"response_mime_type": "application/json"},
-    )
+    client = genai.Client(api_key=api_key)
     prefs = f"dietary restriction: {dietary}" if dietary != "None" else "no specific preferences"
     prompt = (
         f"Pantry ingredients: {', '.join(pantry)}.\n"
@@ -142,17 +138,24 @@ def generate_meal_plan(api_key, pantry, dietary, days):
         f"Generate a {days}-day dinner meal plan as JSON with exactly {days} recipes, "
         f"one per day, in the same schema."
     )
-    response = model.generate_content(prompt)
+    system_instruction = (
+        RECIPE_SCHEMA_INSTRUCTIONS
+        + "\nGenerate one recipe per day, with good variety across the days."
+    )
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            response_mime_type="application/json",
+        ),
+    )
     return extract_json(response.text)["recipes"]
 
 
 def detect_ingredients_from_image(api_key, image_bytes):
     """Send a photo to Gemini's vision model and get back a plain ingredient list."""
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(
-        "gemini-2.0-flash",
-        generation_config={"response_mime_type": "application/json"},
-    )
+    client = genai.Client(api_key=api_key)
     img = Image.open(io.BytesIO(image_bytes))
     prompt = (
         "Look at this photo of a fridge, pantry, or countertop and identify every "
@@ -160,7 +163,11 @@ def detect_ingredients_from_image(api_key, image_bytes):
         'exact schema: {"ingredients": [string, ...]}. Use simple everyday ingredient '
         'names (e.g. "carrots", "milk", "eggs"), not brand names, not quantities, no duplicates.'
     )
-    response = model.generate_content([prompt, img])
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=[prompt, img],
+        config=types.GenerateContentConfig(response_mime_type="application/json"),
+    )
     return extract_json(response.text)["ingredients"]
 
 
