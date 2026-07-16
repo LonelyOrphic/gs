@@ -98,10 +98,34 @@ Rules:
 """
 
 
+class JsonParseError(Exception):
+    """Raised when the model's response couldn't be parsed as JSON — carries the raw text."""
+    def __init__(self, raw_text: str):
+        self.raw_text = raw_text
+        super().__init__("Model response was not valid JSON")
+
+
 def extract_json(text: str) -> dict:
-    """Strip markdown fences if present and parse JSON safely."""
+    """Strip markdown fences if present and parse JSON safely. Falls back to
+    locating the first {...} block if the model added stray commentary."""
+    if not text or not text.strip():
+        raise JsonParseError(text or "(empty response)")
+
     cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.MULTILINE)
-    return json.loads(cleaned)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+
+    # Fallback: grab the widest {...} span and try that instead.
+    match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            pass
+
+    raise JsonParseError(text)
 
 
 def generate_recipes(api_key, pantry, dietary, cuisine, count):
@@ -119,7 +143,7 @@ def generate_recipes(api_key, pantry, dietary, cuisine, count):
         f"Generate exactly {count} recipe suggestions as JSON."
     )
     response = client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-flash-latest",
         contents=prompt,
         config=types.GenerateContentConfig(
             system_instruction=RECIPE_SCHEMA_INSTRUCTIONS,
@@ -143,7 +167,7 @@ def generate_meal_plan(api_key, pantry, dietary, days):
         + "\nGenerate one recipe per day, with good variety across the days."
     )
     response = client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-flash-latest",
         contents=prompt,
         config=types.GenerateContentConfig(
             system_instruction=system_instruction,
@@ -164,7 +188,7 @@ def detect_ingredients_from_image(api_key, image_bytes):
         'names (e.g. "carrots", "milk", "eggs"), not brand names, not quantities, no duplicates.'
     )
     response = client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-flash-latest",
         contents=[prompt, img],
         config=types.GenerateContentConfig(response_mime_type="application/json"),
     )
@@ -288,8 +312,10 @@ def render_photo_detector(api_key, pantry_key, widget_key):
                             st.success(f"Added: {', '.join(found)}")
                         else:
                             st.warning("Couldn't identify any ingredients in that photo — try a clearer shot.")
-                    except json.JSONDecodeError:
+                    except JsonParseError as e:
                         st.error("The model returned something that wasn't valid JSON. Try again.")
+                        with st.expander("Show raw model response"):
+                            st.code(e.raw_text)
                     except Exception as e:
                         st.error(friendly_error_message(e))
 
@@ -372,8 +398,10 @@ with tab1:
                 try:
                     recipes = generate_recipes(api_key, pantry, dietary, cuisine, count)
                     st.session_state["last_recipes"] = recipes
-                except json.JSONDecodeError:
+                except JsonParseError as e:
                     st.error("The model returned something that wasn't valid JSON. Try again.")
+                    with st.expander("Show raw model response"):
+                        st.code(e.raw_text)
                 except Exception as e:
                     st.error(friendly_error_message(e))
 
@@ -421,8 +449,10 @@ with tab2:
                 try:
                     plan = generate_meal_plan(api_key, pantry2, dietary, days)
                     st.session_state["last_plan"] = plan
-                except json.JSONDecodeError:
+                except JsonParseError as e:
                     st.error("The model returned something that wasn't valid JSON. Try again.")
+                    with st.expander("Show raw model response"):
+                        st.code(e.raw_text)
                 except Exception as e:
                     st.error(friendly_error_message(e))
 
